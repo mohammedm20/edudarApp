@@ -1,0 +1,48 @@
+name: Build and Sign Edudar Installer
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Windows Bootstrapper
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build Release Binary
+        run: cargo build --release
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EdudarSetup-unsigned
+          path: target/release/edudar-installer.exe
+
+  # Setup SignPath.io integration (free for open-source projects)
+  # See https://about.signpath.io/documentation/projects/github-actions
+  # sign:
+  #   needs: build
+  #   runs-on: windows-latest
+  #   steps:
+  #     - name: Sign with SignPath
+  #       uses: signpath/github-action-submit-signing-request@v1
+  #       with:
+  #         api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+  #         organization-id: '${{ secrets.SIGNPATH_ORGANIZATION_ID }}'
+  #         project-slug: 'edudar-installer'
+  #         signing-policy-slug: 'release-signing'
+  #         artifact-configuration-slug: 'default'
+  #         github-artifact-name: 'EdudarSetup-unsigned'
+  #         output-artifact-name: 'EdudarSetup-signed'
