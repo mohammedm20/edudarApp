@@ -254,6 +254,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             if let Some(ref mut st) = STATE {
                 st.progress_pct = pct;
                 SendMessageW(st.progress_bar, PBM_SETPOS, WPARAM(pct), LPARAM(0));
+                let _ = InvalidateRect(hwnd, None, true);
             }
             LRESULT(0)
         }
@@ -394,7 +395,10 @@ fn run_installer_workflow(hwnd: HWND) {
     }
 
     // 3. Verify SHA-256 Hash
-    set_ui_status(hwnd, "جاري التحقق من سلامة وأمان الحزمة...", "مطابقة بصمة التشفير SHA-256...");
+    set_ui_status(hwnd, "جاري التحقق من التوقيع الرقمي والأمان...", "مطابقة بصمة التشفير SHA-256...");
+    unsafe {
+        let _ = PostMessageW(hwnd, WM_APP_PROGRESS, WPARAM(85), LPARAM(0));
+    }
     if !verify_file_hash(&setup_dest, &expected_sha) {
         set_ui_status(hwnd, "فشل التحقق الأمني", "بصمة الملف لا تطابق التوقيع الرقمي الأصلي!");
         let _ = std::fs::remove_file(&setup_dest);
@@ -405,7 +409,7 @@ fn run_installer_workflow(hwnd: HWND) {
     // 4. Silent Background Installation + File Association Registration
     set_ui_status(hwnd, "جاري تثبيت ملفات البرنامج وربط الصيغ...", "تثبيت صامت وتهيئة لواحق الملفات (.lvid, .lvidd, .edudar)...");
     unsafe {
-        let _ = PostMessageW(hwnd, WM_APP_PROGRESS, WPARAM(95), LPARAM(0));
+        let _ = PostMessageW(hwnd, WM_APP_PROGRESS, WPARAM(92), LPARAM(0));
     }
 
     // Run setup silently with explicit tasks for associations and desktop shortcuts
@@ -484,7 +488,7 @@ fn download_file_with_progress(hwnd: HWND, url: &str, dest: &PathBuf, expected_s
 
     let mut reader = resp.into_reader();
     let mut file = std::fs::File::create(dest).map_err(|e| e.to_string())?;
-    let mut buf = [0u8; 64 * 1024];
+    let mut buf = [0u8; 16 * 1024];
     let mut downloaded: u64 = 0;
     let mut last_pct = 0;
 
@@ -497,9 +501,17 @@ fn download_file_with_progress(hwnd: HWND, url: &str, dest: &PathBuf, expected_s
         downloaded += n as u64;
 
         if total_len > 0 {
-            let pct = ((downloaded as f64 / total_len as f64) * 100.0) as usize;
+            // Scale download progress smoothly from 0% to 80%
+            let pct = ((downloaded as f64 / total_len as f64) * 80.0) as usize;
             if pct != last_pct {
                 last_pct = pct;
+                let downloaded_mb = (downloaded as f64) / (1024.0 * 1024.0);
+                let total_mb = (total_len as f64) / (1024.0 * 1024.0);
+                set_ui_status(
+                    hwnd,
+                    "جاري تنزيل ملفات البرنامج...",
+                    &format!("{:.1} MB / {:.1} MB", downloaded_mb, total_mb),
+                );
                 unsafe {
                     let _ = PostMessageW(hwnd, WM_APP_PROGRESS, WPARAM(pct), LPARAM(0));
                 }
