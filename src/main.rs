@@ -402,21 +402,62 @@ fn run_installer_workflow(hwnd: HWND) {
         return;
     }
 
-    // 4. Launch installer
-    set_ui_status(hwnd, "اكتمل التنزيل بنجاح!", "جاري بدء تثبيت البرنامج...");
+    // 4. Silent Background Installation + File Association Registration
+    set_ui_status(hwnd, "جاري تثبيت ملفات البرنامج وربط الصيغ...", "تثبيت صامت وتهيئة لواحق الملفات (.lvid, .lvidd, .edudar)...");
     unsafe {
-        let setup_path_w = encode_wide(setup_dest.to_str().unwrap_or_default());
-        let op_w = encode_wide("open");
-        ShellExecuteW(
-            hwnd,
-            PCWSTR(op_w.as_ptr()),
-            PCWSTR(setup_path_w.as_ptr()),
-            PCWSTR::null(),
-            PCWSTR::null(),
-            SW_SHOW,
-        );
+        let _ = PostMessageW(hwnd, WM_APP_PROGRESS, WPARAM(95), LPARAM(0));
+    }
 
-        let _ = PostMessageW(hwnd, WM_APP_COMPLETE, WPARAM(0), LPARAM(0));
+    // Run setup silently with explicit tasks for associations and desktop shortcuts
+    let status = std::process::Command::new(&setup_dest)
+        .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/TASKS=desktopicon,assoc"])
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {
+            set_ui_status(hwnd, "اكتمل التثبيت والتهيئة بنجاح!", "جاري تشغيل البرنامج...");
+            unsafe {
+                let _ = PostMessageW(hwnd, WM_APP_PROGRESS, WPARAM(100), LPARAM(0));
+            }
+
+            // Find and launch Edudar.exe
+            let possible_paths = [
+                std::env::var("LOCALAPPDATA").map(|p| PathBuf::from(p).join("Programs").join("Edudar").join("Edudar.exe")),
+                std::env::var("ProgramFiles").map(|p| PathBuf::from(p).join("Edudar").join("Edudar.exe")),
+            ];
+
+            for path_res in possible_paths {
+                if let Ok(exe_path) = path_res {
+                    if exe_path.exists() {
+                        unsafe {
+                            let exe_w = encode_wide(exe_path.to_str().unwrap_or_default());
+                            let op_w = encode_wide("open");
+                            ShellExecuteW(
+                                hwnd,
+                                PCWSTR(op_w.as_ptr()),
+                                PCWSTR(exe_w.as_ptr()),
+                                PCWSTR::null(),
+                                PCWSTR::null(),
+                                SW_SHOW,
+                            );
+                        }
+                        break;
+                    }
+                }
+            }
+
+            unsafe {
+                let _ = PostMessageW(hwnd, WM_APP_COMPLETE, WPARAM(0), LPARAM(0));
+            }
+        }
+        Ok(s) => {
+            set_ui_status(hwnd, "حدث خطأ أثناء التثبيت", &format!("رمز الخروج: {:?}", s.code()));
+            unsafe { let _ = PostMessageW(hwnd, WM_APP_ERROR, WPARAM(0), LPARAM(0)); }
+        }
+        Err(e) => {
+            set_ui_status(hwnd, "تعذر تشغيل التثبيت التلقائي", &format!("{}", e));
+            unsafe { let _ = PostMessageW(hwnd, WM_APP_ERROR, WPARAM(0), LPARAM(0)); }
+        }
     }
 }
 
