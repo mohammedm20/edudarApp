@@ -378,8 +378,8 @@ fn run_installer_workflow(hwnd: HWND) {
             // Fallback: GitHub Releases direct link
             (
                 "https://github.com/mohammedm20/edudarApp/releases/download/v0.1.0/Setup_Edudar_0.1.0.exe".to_string(),
-                "f6073b55a00b325a7cef1a0731dbf457bdc02403e76d4c8f131eca54122a0095".to_string(),
-                47055528u64,
+                "1c6158d54abe097f0c5859d1aef8324dfcd641f16e1626089e4142a8f26055e3".to_string(),
+                47059682u64,
             )
         }
     };
@@ -410,7 +410,7 @@ fn run_installer_workflow(hwnd: HWND) {
 
     // Run setup silently with explicit tasks for associations and desktop shortcuts
     let status = std::process::Command::new(&setup_dest)
-        .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/TASKS=desktopicon,assoc"])
+        .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/CURRENTUSER", "/TASKS=desktopicon,assoc"])
         .status();
 
     match status {
