@@ -30,19 +30,19 @@ jobs:
           name: EdudarSetup-unsigned
           path: target/release/edudar-installer.exe
 
-  # Setup SignPath.io integration (free for open-source projects)
-  # See https://about.signpath.io/documentation/projects/github-actions
-  # sign:
-  #   needs: build
-  #   runs-on: windows-latest
-  #   steps:
-  #     - name: Sign with SignPath
-  #       uses: signpath/github-action-submit-signing-request@v1
-  #       with:
-  #         api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
-  #         organization-id: '${{ secrets.SIGNPATH_ORGANIZATION_ID }}'
-  #         project-slug: 'edudar-installer'
-  #         signing-policy-slug: 'release-signing'
-  #         artifact-configuration-slug: 'default'
-  #         github-artifact-name: 'EdudarSetup-unsigned'
-  #         output-artifact-name: 'EdudarSetup-signed'
+  sign:
+    name: Sign Executable with SignPath
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - name: Submit Signing Request
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: '${{ secrets.SIGNPATH_ORGANIZATION_ID || ''1ff342f3-17f7-4aae-a352-2439d26a15d4'' }}'
+          project-slug: 'linkpen'
+          signing-policy-slug: 'test-signing'
+          github-artifact-name: 'EdudarSetup-unsigned'
+          output-artifact-name: 'EdudarSetup-signed'
+          wait-for-completion: true
+
