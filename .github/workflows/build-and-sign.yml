@@ -40,7 +40,7 @@ jobs:
         if: ${{ env.HAVE_TOKEN != '' }}
         env:
           HAVE_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
-        uses: signpath/github-action-submit-signing-request@v1
+        uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
           organization-id: '1ff342f3-17f7-4aae-a352-2439d26a15d4'
