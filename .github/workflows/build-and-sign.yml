@@ -9,8 +9,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    name: Build Windows Bootstrapper
+  build-and-sign:
+    name: Build and Sign Windows Installer
     runs-on: windows-latest
     steps:
       - name: Checkout Repository
@@ -24,25 +24,32 @@ jobs:
       - name: Build Release Binary
         run: cargo build --release
 
-      - name: Upload Artifact
+      - name: Upload Unsigned Artifact
+        id: upload-unsigned-artifact
         uses: actions/upload-artifact@v4
         with:
           name: EdudarSetup-unsigned
           path: target/release/edudar-installer.exe
 
-  sign:
-    name: Sign Executable with SignPath
-    needs: build
-    runs-on: windows-latest
-    steps:
-      - name: Submit Signing Request
+      - name: Submit Signing Request to SignPath
+        if: ${{ env.HAVE_TOKEN != '' }}
+        env:
+          HAVE_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
         uses: signpath/github-action-submit-signing-request@v1
         with:
           api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
-          organization-id: '${{ secrets.SIGNPATH_ORGANIZATION_ID || ''1ff342f3-17f7-4aae-a352-2439d26a15d4'' }}'
+          organization-id: '1ff342f3-17f7-4aae-a352-2439d26a15d4'
           project-slug: 'linkpen'
           signing-policy-slug: 'test-signing'
-          github-artifact-name: 'EdudarSetup-unsigned'
-          output-artifact-name: 'EdudarSetup-signed'
+          github-artifact-id: '${{ steps.upload-unsigned-artifact.outputs.artifact-id }}'
           wait-for-completion: true
+          output-artifact-directory: 'signed-output'
 
+      - name: Upload Signed Artifact
+        if: ${{ env.HAVE_TOKEN != '' }}
+        env:
+          HAVE_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: EdudarSetup-signed
+          path: signed-output/
