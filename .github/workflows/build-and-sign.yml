@@ -8,6 +8,11 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
 jobs:
   build-and-sign:
     name: Build and Sign Windows Installer
@@ -41,6 +46,7 @@ jobs:
           organization-id: '1ff342f3-17f7-4aae-a352-2439d26a15d4'
           project-slug: 'linkpen'
           signing-policy-slug: 'test-signing'
+          github-token: '${{ secrets.GITHUB_TOKEN }}'
           github-artifact-id: '${{ steps.upload-unsigned-artifact.outputs.artifact-id }}'
           wait-for-completion: true
           output-artifact-directory: 'signed-output'
