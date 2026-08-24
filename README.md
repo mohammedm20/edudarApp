@@ -6,7 +6,7 @@ Official lightweight open-source web installer and bootstrapper for the **Edudar
 - **Ultra-lightweight:** Compact native Windows executable (~1.5 MB).
 - **Cryptographically Secure:** Verifies SHA-256 and Ed25519 digital signatures before execution.
 - **Fast & Resilient:** Automatic failover, streaming progress, and native Win32 UI.
-- **Dual-Language:** Clean Arabic and English interface.
+- **Modern English UI:** Clean, redesigned native Win32 interface with an accent header banner and refined layout.
 
 ## 🛠️ Building
 To build locally:
