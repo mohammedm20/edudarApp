@@ -605,6 +605,61 @@ fn set_version_badge(hwnd: HWND, version_str: &str) {
     }
 }
 
+// ─── Security: Domain Allowlist ───────────────────────────────────────────────
+/// Trusted URL prefixes for downloading setup packages.
+/// Any URL not matching these prefixes is rejected to prevent redirection attacks
+/// (e.g. a compromised update server pointing the installer at a malicious binary).
+const ALLOWED_DOWNLOAD_PREFIXES: &[&str] = &[
+    "https://github.com/mohammedm20/edudarApp/",
+    "https://objects.githubusercontent.com/",
+];
+
+fn is_allowed_download_url(url: &str) -> bool {
+    ALLOWED_DOWNLOAD_PREFIXES.iter().any(|prefix| url.starts_with(prefix))
+}
+
+// ─── Security: Ed25519 Manifest Signature Verification ───────────────────────
+/// Pinned Ed25519 public key (hex) for verifying server-issued update manifests.
+///
+/// When this is empty, the installer accepts unsigned manifests from the server
+/// (transition period). Once a key is generated and configured here, unsigned
+/// manifests from the server are silently rejected.
+///
+/// Generate a key pair with:  cargo run -p sign-release -- keygen
+/// Then set the LVID_RELEASE_PUBLIC_KEY_HEX value below.
+const MANIFEST_SIGNING_PUBLIC_KEY_HEX: &str = "1a0f208cddaedd46039a038d6eaac8e7135a826fc70a65464f03122512beabad";
+
+/// Verify a signed manifest envelope against the pinned public key.
+/// Returns the parsed inner `UpdateManifest` on success.
+fn verify_signed_manifest(signed: &SignedManifest) -> Result<UpdateManifest, String> {
+    if MANIFEST_SIGNING_PUBLIC_KEY_HEX.is_empty() {
+        return Err("No manifest signing key configured".to_string());
+    }
+
+    let pk_bytes = hex::decode(MANIFEST_SIGNING_PUBLIC_KEY_HEX)
+        .map_err(|_| "Invalid pinned public key hex".to_string())?;
+    let pk_array: [u8; 32] = pk_bytes
+        .try_into()
+        .map_err(|_| "Public key must be exactly 32 bytes".to_string())?;
+    let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&pk_array)
+        .map_err(|e| format!("Invalid public key: {e}"))?;
+
+    let sig_bytes = hex::decode(&signed.signature)
+        .map_err(|_| "Invalid signature hex".to_string())?;
+    let sig_array: [u8; 64] = sig_bytes
+        .try_into()
+        .map_err(|_| "Signature must be exactly 64 bytes".to_string())?;
+    let signature = ed25519_dalek::Signature::from_bytes(&sig_array);
+
+    use ed25519_dalek::Verifier;
+    verifying_key
+        .verify(signed.payload.as_bytes(), &signature)
+        .map_err(|_| "Manifest signature verification failed — possible tampering".to_string())?;
+
+    serde_json::from_str(&signed.payload)
+        .map_err(|e| format!("Invalid manifest payload: {e}"))
+}
+
 #[derive(Debug, Deserialize)]
 struct GithubRelease {
     pub tag_name: Option<String>,
@@ -618,7 +673,7 @@ struct GithubAsset {
     pub browser_download_url: String,
 }
 
-fn resolve_latest_release() -> (String, u64, String) {
+fn resolve_latest_release() -> (String, u64, String, Option<String>) {
     // 1. Try querying GitHub API for latest release on mohammedm20/edudarApp
     let gh_latest_url = "https://api.github.com/repos/mohammedm20/edudarApp/releases/latest";
     if let Ok(resp) = ureq::get(gh_latest_url)
@@ -633,7 +688,7 @@ fn resolve_latest_release() -> (String, u64, String) {
                 for asset in assets {
                     let name_lower = asset.name.to_lowercase();
                     if name_lower.ends_with(".exe") && !name_lower.contains("edudar-installer") {
-                        return (asset.browser_download_url, asset.size, ver);
+                        return (asset.browser_download_url, asset.size, ver, None);
                     }
                 }
             }
@@ -655,7 +710,7 @@ fn resolve_latest_release() -> (String, u64, String) {
                     for asset in assets {
                         let name_lower = asset.name.to_lowercase();
                         if name_lower.ends_with(".exe") && !name_lower.contains("edudar-installer") {
-                            return (asset.browser_download_url, asset.size, ver);
+                            return (asset.browser_download_url, asset.size, ver, None);
                         }
                     }
                 }
@@ -663,33 +718,62 @@ fn resolve_latest_release() -> (String, u64, String) {
         }
     }
 
-    // 3. Fallback: Server Policy
+    // 3. Fallback: Server Policy (prefers cryptographically signed manifest)
     let srv_url = "https://edudar.onrender.com/api/v1/update/manifest";
     if let Ok(resp) = ureq::get(srv_url).timeout(Duration::from_secs(5)).call() {
-        if let Ok(m) = resp.into_json::<UpdateManifest>() {
-            if !m.artifact_url.is_empty() {
-                return (m.artifact_url, m.artifact_size, m.version);
+        if let Ok(body) = resp.into_string() {
+            // Attempt 1: Signed manifest — verified against pinned Ed25519 public key
+            if let Ok(signed) = serde_json::from_str::<SignedManifest>(&body) {
+                if let Ok(m) = verify_signed_manifest(&signed) {
+                    if !m.artifact_url.is_empty() {
+                        let hash = if m.artifact_sha256.is_empty() { None } else { Some(m.artifact_sha256) };
+                        return (m.artifact_url, m.artifact_size, m.version, hash);
+                    }
+                }
+            }
+            // Attempt 2: Unsigned manifest — accepted only during transition
+            //            (no signing key configured yet). Domain allowlist still
+            //            blocks arbitrary URLs before download.
+            if MANIFEST_SIGNING_PUBLIC_KEY_HEX.is_empty() {
+                if let Ok(m) = serde_json::from_str::<UpdateManifest>(&body) {
+                    if !m.artifact_url.is_empty() {
+                        let hash = if m.artifact_sha256.is_empty() { None } else { Some(m.artifact_sha256) };
+                        return (m.artifact_url, m.artifact_size, m.version, hash);
+                    }
+                }
             }
         }
     }
 
     // 4. Ultimate Direct Fallback
     (
-        "https://github.com/mohammedm20/edudarApp/releases/download/v0.1.0/Setup_Edudar_0.2.0.exe".to_string(),
-        17948337u64,
-        "0.2.0".to_string(),
+        "https://github.com/mohammedm20/edudarApp/releases/download/v0.3.0/Setup_Edudar_0.3.0.exe".to_string(),
+        14919802u64,
+        "0.3.0".to_string(),
+        None,
     )
 }
 
 fn run_installer_workflow(hwnd: HWND) {
     let temp_dir = std::env::temp_dir();
-    let setup_dest = temp_dir.join("Setup_Edudar.exe");
+    let setup_dest = temp_dir.join(format!("Setup_Edudar_{}.exe", std::process::id()));
 
     // 1. Fetch manifest or resolve direct artifact
     set_ui_status(hwnd, "Checking for Latest Version...", "Querying official GitHub releases...");
 
-    let (artifact_url, expected_size, version_name) = resolve_latest_release();
+    let (artifact_url, expected_size, version_name, expected_sha256) = resolve_latest_release();
     set_version_badge(hwnd, &version_name);
+
+    // Security: Verify download URL is from a trusted domain
+    if !is_allowed_download_url(&artifact_url) {
+        set_ui_status(
+            hwnd,
+            "Security Error",
+            &format!("Download rejected: URL is not from a trusted source.\n{}", artifact_url),
+        );
+        unsafe { let _ = PostMessageW(hwnd, WM_APP_ERROR, WPARAM(0), LPARAM(0)); }
+        return;
+    }
 
     // 2. Download artifact with smooth progress
     set_ui_status(
@@ -704,27 +788,47 @@ fn run_installer_workflow(hwnd: HWND) {
         return;
     }
 
-    // 3. Verify Security & Integrity (valid Windows PE executable)
-    set_ui_status(hwnd, "Verifying Security & Integrity...", "Verifying executable package signature...");
+    // 3. Verify Security & Integrity (SHA-256 + valid Windows PE executable)
+    set_ui_status(hwnd, "Verifying Security & Integrity...", "Computing SHA-256 digest and verifying package integrity...");
     unsafe {
         let _ = PostMessageW(hwnd, WM_APP_PROGRESS, WPARAM(85), LPARAM(0));
     }
-    
-    let is_valid = match std::fs::File::open(&setup_dest) {
-        Ok(mut f) => {
-            let mut magic = [0u8; 2];
-            let read_ok = f.read_exact(&mut magic).is_ok();
-            let size = f.metadata().map(|m| m.len()).unwrap_or(0);
-            read_ok && magic == [b'M', b'Z'] && size > 10_000_000
+
+    let file_bytes = match std::fs::read(&setup_dest) {
+        Ok(b) => b,
+        Err(_) => {
+            set_ui_status(hwnd, "Package Error", "Failed to read downloaded package for verification.");
+            unsafe { let _ = PostMessageW(hwnd, WM_APP_ERROR, WPARAM(0), LPARAM(0)); }
+            return;
         }
-        Err(_) => false,
     };
 
-    if !is_valid {
+    // Check MZ header (valid Windows PE) and minimum size
+    if file_bytes.len() < 2 || file_bytes[..2] != [b'M', b'Z'] || file_bytes.len() < 10_000_000 {
         set_ui_status(hwnd, "Package Error", "Downloaded package is incomplete or corrupted.");
         let _ = std::fs::remove_file(&setup_dest);
         unsafe { let _ = PostMessageW(hwnd, WM_APP_ERROR, WPARAM(0), LPARAM(0)); }
         return;
+    }
+
+    // Verify SHA-256 hash if available from the update manifest
+    if let Some(ref expected_hash) = expected_sha256 {
+        let mut hasher = Sha256::new();
+        hasher.update(&file_bytes);
+        let computed_hash = hex::encode(hasher.finalize());
+        if !computed_hash.eq_ignore_ascii_case(expected_hash) {
+            set_ui_status(
+                hwnd,
+                "Security Verification Failed",
+                &format!(
+                    "SHA-256 mismatch — the downloaded file may have been tampered with.\nExpected: {}\nComputed: {}",
+                    expected_hash, computed_hash
+                ),
+            );
+            let _ = std::fs::remove_file(&setup_dest);
+            unsafe { let _ = PostMessageW(hwnd, WM_APP_ERROR, WPARAM(0), LPARAM(0)); }
+            return;
+        }
     }
 
     // 4. Silent Background Installation + File Association Registration
@@ -784,6 +888,9 @@ fn run_installer_workflow(hwnd: HWND) {
             unsafe { let _ = PostMessageW(hwnd, WM_APP_ERROR, WPARAM(0), LPARAM(0)); }
         }
     }
+
+    // Cleanup: remove downloaded setup package from temp directory
+    let _ = std::fs::remove_file(&setup_dest);
 }
 
 fn download_file_with_progress(hwnd: HWND, url: &str, dest: &PathBuf, expected_size: u64) -> Result<(), String> {
