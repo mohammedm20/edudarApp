@@ -46,6 +46,7 @@ jobs:
           organization-id: '1ff342f3-17f7-4aae-a352-2439d26a15d4'
           project-slug: 'linkpen'
           signing-policy-slug: 'test-signing'
+          artifact-configuration-slug: 'initial-version'
           github-token: '${{ secrets.GITHUB_TOKEN }}'
           github-artifact-id: '${{ steps.upload-unsigned-artifact.outputs.artifact-id }}'
           wait-for-completion: true
